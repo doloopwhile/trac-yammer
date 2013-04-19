@@ -241,7 +241,7 @@ def load_date_range(config, begin_date=None, last_date=None):
                 for row in csv.reader(fp):
                     pass
             s = row[2]
-            previ_last_date = datetime.strptime(s, "%Y-%m-%d").date()
+            prev_last_date = datetime.strptime(s, "%Y-%m-%d").date()
             begin_date = prev_last_date + timedelta(days=1)
         except (ValueError, IndexError, OSError, IOError,
                 UnicodeDecodeError) as e:
