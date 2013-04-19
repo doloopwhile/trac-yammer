@@ -42,6 +42,7 @@ _Config_key_names = list(map(str, """
     history_file_path
 """.split()))
 
+
 class Config:
     @classmethod
     def load(cls, config_file_path, *a, **kw):
@@ -77,6 +78,7 @@ for key_name in _Config_key_names:
         setattr(Config, key_name, getter)
     create_getter_method()
 
+
 def goo_gl_shorten(longUrl, api_url):
     data = json.dumps(dict(longUrl=longUrl))
     req = urllib2.Request(api_url, data)
@@ -96,6 +98,7 @@ def load_auth_token(path):
     with io.open(path, 'rb') as fp:
         x = json.load(fp)
         return oauth.Token(x['auth_key'], x['auth_secret'])
+
 
 def save_auth_token(path, auth_token):
     with io.open(path, 'wb') as fp:
@@ -120,9 +123,12 @@ def create_message_body(config):
     feed = feedparser.parse(get_feed_url(config))
 
     if config.begin_date() < config.last_date():
-        days = "{}日から{}日".format(config.begin_date().day, config.last_date().day)
+        days = "{begin_day}日から{last_day}日".format(
+            begin_day=config.begin_date().day,
+            last_day=config.last_date().day
+        )
     else:
-        days = "{}日".format(config.last_date().day)
+        days = "{day}日".format(day=config.last_date().day)
 
     if not feed.entries:
         return '{}はWikiの更新はありませんでした。'.format(days)
@@ -131,6 +137,7 @@ def create_message_body(config):
     fp.write('のWikiの更新は以下の通りです:\n\n'.format(days))
 
     pages = {}
+
     def entry_path(entry):
         return urlparse.urlparse(entry.link).path
 
@@ -154,8 +161,12 @@ def create_message_body(config):
         ))
 
         short_link = goo_gl_shorten(link, config.goo_gl_api_url())
+        page_rel_path = posixpath.relpath(
+            page_path,
+            config.navona_wiki_path()
+        )
         fp.write(u'{page_rel_path}<{short_link}>\n'.format(
-            page_rel_path=posixpath.relpath(page_path, config.navona_wiki_path()),
+            page_rel_path=page_rel_path,
             short_link=short_link,
         ))
 
@@ -231,8 +242,10 @@ def load_date_range(config, begin_date=None, last_date=None):
                 for row in csv.reader(fp):
                     pass
             s = row[2]
-            begin_date = datetime.strptime(s, "%Y-%m-%d").date() + timedelta(days=1)
-        except (ValueError, IndexError, OSError, IOError, UnicodeDecodeError) as e:
+            previ_last_date = datetime.strptime(s, "%Y-%m-%d").date()
+            begin_date = prev_last_date + timedelta(days=1)
+        except (ValueError, IndexError, OSError, IOError,
+                UnicodeDecodeError) as e:
             logging.warning(e)
             begin_date = last_date
 
@@ -255,13 +268,14 @@ def main():
 
     args = parser.parse_args()
 
-    config = Config.load(config_file_path = args.config_file)
+    config = Config.load(config_file_path=args.config_file)
     logging.basicConfig(
         filename=config.logfile_path(),
         format='%(asctime)s %(levelname)s %(message)s'
     )
 
-    begin_date, last_date = load_date_range(config,
+    begin_date, last_date = load_date_range(
+        config,
         parse_date_if(args.begin_date),
         parse_date_if(args.last_date),
     )
@@ -278,13 +292,13 @@ def main():
 
         client = create_client(config)
 
-        params = dict(
+        params = urllib.urlencode(dict(
             group_id=config.group_id(),
             body=create_message_body(config).encode(u'utf-8'),
             broadcast=True
-        )
+        ))
 
-        resp, content = client.request(config.messages_url(), 'POST', urllib.urlencode(params))
+        resp, content = client.request(config.messages_url(), 'POST', params)
         logging.info("response-status={}".format(resp['status']))
         if not resp['status'].startswith('2'):
             logging.warning("response-content={}".format(resp['status']))
@@ -295,4 +309,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
