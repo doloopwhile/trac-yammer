@@ -61,14 +61,13 @@ class Config:
     def begin_date(self):
         return self._begin_date
 
-    def set_begin_date(self, begin_date):
-        self._begin_date = begin_date
-
     def last_date(self):
         return self._last_date
 
-    def set_last_date(self, last_date):
+    def set_date_range(self, begin_date, last_date):
+        self._begin_date = begin_date
         self._last_date = last_date
+
 
 for key_name in _Config_key_names:
     def create_getter_method(key_name=key_name):
@@ -279,8 +278,7 @@ def main():
         parse_date_if(args.begin_date),
         parse_date_if(args.last_date),
     )
-    config.set_begin_date(begin_date)
-    config.set_last_date(last_date)
+    config.set_date_range(begin_date, last_date)
 
     if begin_date > last_date:
         logging.info("begin_date {} is later than end_date {}, do nothing")
