@@ -17,6 +17,7 @@ import csv
 import time
 from email.utils import formatdate
 from datetime import date, datetime, timedelta
+from itertools import groupby
 
 
 from pyquery import PyQuery
@@ -35,6 +36,7 @@ _Config_key_names = list(map(str, """
   auth_url
   feed_url_base
   navona_wiki_path
+  navona_wiki_netloc
   goo_gl_api_url
   logfile_path
   history_file_path
@@ -110,7 +112,7 @@ def get_feed_url(config):
     format='rss',
   )
   params['from'] = config.last_date().strftime('%Y/%m/%d').encode('utf-8')
-  params['daysback'] = (config.last_date() - config.begin_date()).day
+  params['daysback'] = (config.last_date() - config.begin_date()).days
   return config.feed_url_base() + '?' + urllib.urlencode(params)
 
 
@@ -129,28 +131,41 @@ def create_message_body(config):
   fp.write('のWikiの更新は以下の通りです:\n\n'.format(days))
 
   pages = {}
-  for entry in feed.entries:
+  def entry_path(entry):
+    return urlparse.urlparse(entry.link).path
+
+  def entry_version(entry):
     p = urlparse.urlparse(entry.link)
+    return urlparse.parse_qs(p.query).get('version')[0]
 
-    # トップページからのパス
-    path = posixpath.relpath(p.path, config.navona_wiki_path())
+  for page_path, page_entries in groupby(feed.entries, entry_path):
+    page_entries = list(page_entries)
 
-    if path not in pages:
-      # バージョン等を除いたURL
-      link = p.scheme + '://' + p.netloc + p.path
-      pages[path] = (link, [])
+    # diffへのURL
+    old_version = min(map(entry_version, page_entries))
 
-    if entry.description:
-      desc = PyQuery(entry.description).find('p').text()
-      if desc:
-        pages[path][1].append(desc)
+    link = urlparse.urlunparse((
+      'http',
+      config.navona_wiki_netloc(),
+      page_path,
+      '',
+      urllib.urlencode(dict(action='diff', old_version=old_version)),
+      '',
+    ))
 
-  for path, (link, descriptions) in pages.items():
-    link = goo_gl_shorten(link, config.goo_gl_api_url())
-    fp.write(u'{path}<{link}>\n'.format(path=path, link=link))
-    for desc in descriptions:
-      if desc:
-        fp.write(u'... {desc}\n'.format(desc=desc))
+    short_link = goo_gl_shorten(link, config.goo_gl_api_url())
+    fp.write(u'{page_rel_path}<{short_link}>\n'.format(
+      page_rel_path=posixpath.relpath(page_path, config.navona_wiki_path()),
+      short_link=short_link,
+    ))
+
+    for entry in sorted(page_entries, key=entry_version):
+      if not entry.description:
+        continue
+      description = PyQuery(entry.description).find('p').text()
+      if not description:
+        continue
+      fp.write(u'... {description}\n'.format(description=description))
 
   return fp.getvalue()
 
@@ -224,6 +239,12 @@ def load_date_range(config, begin_date=None, last_date=None):
   return (begin_date, last_date)
 
 
+def parse_date_if(date_string):
+  if date_string is None:
+    return None
+  return datetime.strptime(date_string, '%Y-%m-%d')
+
+
 def main():
   parser = ArgumentParser()
   parser.add_argument('--config-file', action='store')
@@ -240,7 +261,10 @@ def main():
     format='%(asctime)s %(levelname)s %(message)s'
   )
 
-  begin_date, last_date = load_date_range(config, args.begin_date, args.last_date)
+  begin_date, last_date = load_date_range(config,
+    parse_date_if(args.begin_date),
+    parse_date_if(args.last_date),
+  )
   config.set_begin_date(begin_date)
   config.set_last_date(last_date)
 
