@@ -13,11 +13,14 @@ import urlparse
 from argparse import ArgumentParser
 import posixpath
 import logging
-from pyquery import PyQuery
-import yaml
-
+import csv
+import time
+from email.utils import formatdate
 from datetime import date, datetime, timedelta
 
+
+from pyquery import PyQuery
+import yaml
 import oauth2 as oauth
 import feedparser
 
@@ -34,6 +37,7 @@ _Config_key_names = list(map(str, """
   navona_wiki_path
   goo_gl_api_url
   logfile_path
+  history_file_path
 """.split()))
 
 class Config:
@@ -43,8 +47,7 @@ class Config:
       kw.update(yaml.load(fp))
     return cls(*a, **kw)
 
-  def __init__(self, date, **kw):
-    self._date = date
+  def __init__(self, **kw):
     for key_name in _Config_key_names:
       value = kw[key_name]
       setattr(self, '_' + key_name, value)
@@ -52,6 +55,17 @@ class Config:
   def date(self):
     return self._date
 
+  def begin_date(self):
+    return self._begin_date
+
+  def set_begin_date(self, begin_date):
+    self._begin_date = begin_date
+
+  def last_date(self):
+    return self._last_date
+
+  def set_last_date(self, last_date):
+    self._last_date = last_date
 
 for key_name in _Config_key_names:
   def create_getter_method(key_name=key_name):
@@ -95,17 +109,24 @@ def get_feed_url(config):
     wiki='on',
     format='rss',
   )
-  params['from'] = config.date().strftime('%Y/%m/%d').encode('utf-8')
+  params['from'] = config.last_date().strftime('%Y/%m/%d').encode('utf-8')
+  params['daysback'] = (config.last_date() - config.begin_date()).day
   return config.feed_url_base() + '?' + urllib.urlencode(params)
 
 
 def create_message_body(config):
   feed = feedparser.parse(get_feed_url(config))
+
+  if config.begin_date() < config.last_date():
+    days = "{}日から{}日".format(config.begin_date().day, config.last_date().day)
+  else:
+    days = "{}日".format(config.last_date().day)
+
   if not feed.entries:
-    return '{}日はWikiの更新はありませんでした。'.format(config.date().day)
+    return '{}はWikiの更新はありませんでした。'.format(days)
 
   fp = io.StringIO()
-  fp.write('{}日のWikiの更新は以下の通りです:\n\n'.format(config.date().day))
+  fp.write('のWikiの更新は以下の通りです:\n\n'.format(days))
 
   pages = {}
   for entry in feed.entries:
@@ -174,47 +195,78 @@ def fetch_token_to_file(config):
   save_auth_token(config.token_store_file_path(), auth_token)
 
 
+def append_history(config):
+  with io.open(config.history_file_path(), 'ab') as fp:
+    writer = csv.writer(fp)
+    writer.writerow([
+      formatdate(time.time()).encode('ascii'),
+      config.begin_date().strftime('%Y-%m-%d').encode('ascii'),
+      config.last_date().strftime('%Y-%m-%d').encode('ascii'),
+    ])
+
+
+def load_date_range(config, begin_date=None, last_date=None):
+  if last_date is None:
+    last_date = date.today() - timedelta(days=1)
+
+  if begin_date is None:
+    try:
+      row = ()
+      with io.open(config.history_file_path(), 'rb') as fp:
+        for row in csv.reader(fp):
+          pass
+      s = row[2]
+      begin_date = datetime.strptime(s, "%Y-%m-%d").date() + timedelta(days=1)
+    except (ValueError, IndexError, OSError, IOError, UnicodeDecodeError) as e:
+      logging.warning(e)
+      begin_date = last_date
+
+  return (begin_date, last_date)
+
+
 def main():
   parser = ArgumentParser()
   parser.add_argument('--config-file', action='store')
-  parser.add_argument('--date', action='store', default=None)
+  parser.add_argument('--dry-run', action='store_true')
+  parser.add_argument('--begin-date', action='store', default=None)
+  parser.add_argument('--last-date', action='store', default=None)
   parser.add_argument('--fetch-token', action='store_true')
 
   args = parser.parse_args()
 
-  if args.date is not None:
-    d = dateutil.parser.parse(args.date)
-  else:
-    d = date.today() - timedelta(1)
-
-  config = Config.load(
-    date = d,
-    config_file_path = args.config_file
-  )
-
+  config = Config.load(config_file_path = args.config_file)
   logging.basicConfig(
     filename=config.logfile_path(),
     format='%(asctime)s %(levelname)s %(message)s'
   )
 
-  if args.fetch_token:
-    fetch_token_to_file(config)
-    sys.exit()
+  begin_date, last_date = load_date_range(config, args.begin_date, args.last_date)
+  config.set_begin_date(begin_date)
+  config.set_last_date(last_date)
 
-  client = create_client(config)
-
-  params = dict(
-    group_id=config.group_id(),
-    body=create_message_body(config).encode(u'utf-8'),
-    broadcast=True
-  )
-
-  resp, content = client.request(config.messages_url(), 'POST', urllib.urlencode(params))
-  logging.info("response-status={}".format(resp['status']))
-  if not resp['status'].startswith('2'):
-    logging.info("response-content={}".format(resp['status']))
-    print(content)
+  if begin_date > last_date:
+    logging.info("begin_date {} is later than end_date {}, do nothing")
     sys.exit(1)
+  elif not args.dry_run:
+    if args.fetch_token:
+      fetch_token_to_file(config)
+      sys.exit()
+
+    client = create_client(config)
+
+    params = dict(
+      group_id=config.group_id(),
+      body=create_message_body(config).encode(u'utf-8'),
+      broadcast=True
+    )
+
+    resp, content = client.request(config.messages_url(), 'POST', urllib.urlencode(params))
+    logging.info("response-status={}".format(resp['status']))
+    if not resp['status'].startswith('2'):
+      logging.warning("response-content={}".format(resp['status']))
+      sys.exit(1)
+
+  append_history(config)
 
 
 if __name__ == '__main__':
