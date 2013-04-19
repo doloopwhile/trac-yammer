@@ -1,0 +1,1 @@
+0 8 * * * ~/.virtualenvs/trac-yammer/bin/python /home/omoto/trac-yammer/trac-yammer.py >>/home/omoto/trac-yammer/trac-yammer_error.log 2>&1
