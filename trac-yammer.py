@@ -133,7 +133,7 @@ def create_message_body(config):
         return '{}はWikiの更新はありませんでした。'.format(days)
 
     fp = io.StringIO()
-    fp.write('のWikiの更新は以下の通りです:\n\n'.format(days))
+    fp.write('{}のWikiの更新は以下の通りです:\n\n'.format(days))
 
     pages = {}
 
