@@ -254,7 +254,7 @@ def load_date_range(config, begin_date=None, last_date=None):
 def parse_date_if(date_string):
     if date_string is None:
         return None
-    return datetime.strptime(date_string, '%Y-%m-%d')
+    return datetime.strptime(date_string, '%Y-%m-%d').date()
 
 
 def main():
