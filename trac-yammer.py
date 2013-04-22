@@ -144,7 +144,12 @@ def create_message_body(config):
         p = urlparse.urlparse(entry.link)
         return urlparse.parse_qs(p.query).get('version')[0]
 
-    for page_path, page_entries in groupby(feed.entries, entry_path):
+    # 同じパスの変更が同じグループになるようにソートする
+    # Python のソートは安定なので同じパスの変更どうしは日付順に並ぶ
+    entries = list(feed.entries)
+    entries.sort(key=entry_path)
+
+    for page_path, page_entries in groupby(entries, entry_path):
         page_entries = list(page_entries)
 
         # diffへのURL
