@@ -163,7 +163,11 @@ def create_message_body(config):
 
         def entry_version(entry):
             p = urlparse.urlparse(entry.link)
-            return urlparse.parse_qs(p.query).get('version')[0]
+            v = urlparse.parse_qs(p.query).get('version')
+            try:
+                return int(v[0])
+            except (TypeError, IndexError, ValueError):
+                return 0
 
         # 同じパスの変更が同じグループになるようにソートする
         # Python のソートは安定なので同じパスの変更どうしは日付順に並ぶ
