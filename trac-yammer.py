@@ -34,9 +34,6 @@ _Config_key_names = list(map(str, """
     access_token_url
     messages_url
     auth_url
-    feed_url_base
-    navona_wiki_path
-    navona_wiki_netloc
     goo_gl_api_url
     logfile_path
     history_file_path
@@ -51,7 +48,7 @@ class Config:
         return cls(*a, **kw)
 
     def __init__(self, **kw):
-        for key_name in _Config_key_names:
+        for key_name in _Config_key_names + ['wikis']:
             value = kw[key_name]
             setattr(self, '_' + key_name, value)
 
@@ -68,14 +65,34 @@ class Config:
         self._begin_date = begin_date
         self._last_date = last_date
 
+    def wikis(self):
+        return [WikiConfig(**wiki_dict) for wiki_dict in self._wikis]
 
-for key_name in _Config_key_names:
-    def create_getter_method(key_name=key_name):
-        def getter(self):
-            return getattr(self, "_" + key_name)
-        getter.__name__ = key_name
-        setattr(Config, key_name, getter)
-    create_getter_method()
+    def __getattr__(self, name):
+        attr_name = '_' + name
+        if hasattr(self, attr_name):
+            def get():
+                return getattr(self, attr_name)
+            get.__name__ = name
+            return get
+        raise AttributeError(name)
+
+
+class WikiConfig:
+    def __init__(self, name, netloc, base_path, feed_url_base):
+        self._name = name
+        self._netloc = netloc
+        self._base_path = base_path
+        self._feed_url_base = feed_url_base
+
+    def __getattr__(self, name):
+        attr_name = '_' + name
+        if hasattr(self, attr_name):
+            def get():
+                return getattr(self, attr_name)
+            get.__name__ = name
+            return get
+        raise AttributeError(name)
 
 
 def goo_gl_shorten(longUrl, api_url):
@@ -107,7 +124,7 @@ def save_auth_token(path, auth_token):
         ), fp)
 
 
-def get_feed_url(config):
+def get_feed_url(config, wiki):
     params = dict(
         daysback=0,
         wiki='on',
@@ -115,72 +132,76 @@ def get_feed_url(config):
     )
     params['from'] = config.last_date().strftime('%Y/%m/%d').encode('utf-8')
     params['daysback'] = (config.last_date() - config.begin_date()).days
-    return config.feed_url_base() + '?' + urllib.urlencode(params)
+    return wiki.feed_url_base() + '?' + urllib.urlencode(params)
 
 
 def create_message_body(config):
-    feed = feedparser.parse(get_feed_url(config))
-
-    if config.begin_date() < config.last_date():
-        days = "{begin_day}日から{last_day}日".format(
-            begin_day=config.begin_date().day,
-            last_day=config.last_date().day
-        )
-    else:
-        days = "{day}日".format(day=config.last_date().day)
-
-    if not feed.entries:
-        return '{}はWikiの更新はありませんでした。'.format(days)
-
     fp = io.StringIO()
-    fp.write('{}のWikiの更新は以下の通りです:\n\n'.format(days))
+    for wiki in config.wikis():
+        feed = feedparser.parse(get_feed_url(config, wiki))
 
-    pages = {}
+        if config.begin_date() < config.last_date():
+            days = "{begin_day}日から{last_day}日".format(
+                begin_day=config.begin_date().day,
+                last_day=config.last_date().day
+            )
+        else:
+            days = "{day}日".format(day=config.last_date().day)
 
-    def entry_path(entry):
-        return urlparse.urlparse(entry.link).path
+        if not feed.entries:
+            fi.write('{days}は{wiki_name}の更新はありませんでした。\n\n'.format(
+                days=days, wiki_name=wiki.name()))
+            continue
 
-    def entry_version(entry):
-        p = urlparse.urlparse(entry.link)
-        return urlparse.parse_qs(p.query).get('version')[0]
+        fp.write('{days}の{wiki_name}の更新は以下の通りです:\n\n'.format(
+            days=days, wiki_name=wiki.name()))
 
-    # 同じパスの変更が同じグループになるようにソートする
-    # Python のソートは安定なので同じパスの変更どうしは日付順に並ぶ
-    entries = list(feed.entries)
-    entries.sort(key=entry_path)
+        pages = {}
 
-    for page_path, page_entries in groupby(entries, entry_path):
-        page_entries = list(page_entries)
+        def entry_path(entry):
+            return urlparse.urlparse(entry.link).path
 
-        # diffへのURL
-        old_version = min(map(entry_version, page_entries))
+        def entry_version(entry):
+            p = urlparse.urlparse(entry.link)
+            return urlparse.parse_qs(p.query).get('version')[0]
 
-        link = urlparse.urlunparse((
-            'http',
-            config.navona_wiki_netloc(),
-            page_path,
-            '',
-            urllib.urlencode(dict(action='diff', old_version=old_version)),
-            '',
-        ))
+        # 同じパスの変更が同じグループになるようにソートする
+        # Python のソートは安定なので同じパスの変更どうしは日付順に並ぶ
+        entries = list(feed.entries)
+        entries.sort(key=entry_path)
 
-        short_link = goo_gl_shorten(link, config.goo_gl_api_url())
-        page_rel_path = posixpath.relpath(
-            page_path,
-            config.navona_wiki_path()
-        )
-        fp.write(u'{page_rel_path}<{short_link}>\n'.format(
-            page_rel_path=page_rel_path,
-            short_link=short_link,
-        ))
+        for page_path, page_entries in groupby(entries, entry_path):
+            page_entries = list(page_entries)
 
-        for entry in sorted(page_entries, key=entry_version):
-            if not entry.description:
-                continue
-            description = PyQuery(entry.description).find('p').text()
-            if not description:
-                continue
-            fp.write(u'... {description}\n'.format(description=description))
+            # diffへのURL
+            old_version = min(map(entry_version, page_entries))
+
+            link = urlparse.urlunparse((
+                'http',
+                wiki.netloc(),
+                page_path,
+                '',
+                urllib.urlencode(dict(action='diff', old_version=old_version)),
+                '',
+            ))
+
+            short_link = goo_gl_shorten(link, config.goo_gl_api_url())
+            page_rel_path = posixpath.relpath(
+                page_path,
+                wiki.base_path()
+            )
+            fp.write(u'{page_rel_path}<{short_link}>\n'.format(
+                page_rel_path=page_rel_path,
+                short_link=short_link,
+            ))
+
+            for entry in sorted(page_entries, key=entry_version):
+                if not entry.description:
+                    continue
+                description = PyQuery(entry.description).find('p').text()
+                if not description:
+                    continue
+                fp.write(u'... {description}\n'.format(description=description))
 
     return fp.getvalue()
 
