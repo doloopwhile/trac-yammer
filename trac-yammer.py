@@ -149,11 +149,11 @@ def create_message_body(config):
             days = "{day}日".format(day=config.last_date().day)
 
         if not feed.entries:
-            fi.write('{days}は{wiki_name}の更新はありませんでした。\n\n'.format(
+            fi.write('{days}は{wiki_name}の更新はありませんでした。\n'.format(
                 days=days, wiki_name=wiki.name()))
             continue
 
-        fp.write('{days}の{wiki_name}の更新は以下の通りです:\n\n'.format(
+        fp.write('{days}の{wiki_name}の更新は以下の通りです:\n'.format(
             days=days, wiki_name=wiki.name()))
 
         pages = {}
@@ -206,6 +206,7 @@ def create_message_body(config):
                 if not description:
                     continue
                 fp.write(u'... {description}\n'.format(description=description))
+        fp.write('\n')
 
     return fp.getvalue()
 
