@@ -1,37 +1,33 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 from __future__ import print_function, unicode_literals
-import os
-import sys
+
+from argparse import ArgumentParser
+from datetime import date, datetime, timedelta
+from email.utils import formatdate
+from itertools import groupby
+import csv
 import io
+import json
+import logging
+import posixpath
+import sys
 import time
 import urllib
-import json
 import urllib2
-import dateutil.parser
 import urlparse
-from argparse import ArgumentParser
-import posixpath
-import logging
-import csv
-import time
-from email.utils import formatdate
-from datetime import date, datetime, timedelta
-from itertools import groupby
-
 
 from pyquery import PyQuery
-import yaml
-import oauth2 as oauth
 import feedparser
+import yaml
+import yampy
+
 
 _Config_key_names = list(map(str, """
     group_id
-    token_store_file_path
-    consumer_key
-    consumer_secret
-    request_token_url
-    access_token_url
+    client_id
+    client_secret
+    access_token
     messages_url
     auth_url
     goo_gl_api_url
@@ -102,26 +98,6 @@ def goo_gl_shorten(longUrl, api_url):
 
     fp = urllib2.urlopen(req)
     return json.loads(fp.read())['id']
-
-
-def prompt_verifier(request_token, url):
-    print("Go to the following link in your browser:")
-    print("{}?oauth_token={}".format(url, request_token.key))
-    return raw_input('What is the PIN? ')
-
-
-def load_auth_token(path):
-    with io.open(path, 'rb') as fp:
-        x = json.load(fp)
-        return oauth.Token(x['auth_key'], x['auth_secret'])
-
-
-def save_auth_token(path, auth_token):
-    with io.open(path, 'wb') as fp:
-        json.dump(dict(
-            auth_key=auth_token.key,
-            auth_secret=auth_token.secret
-        ), fp)
 
 
 def get_feed_url(config, wiki):
@@ -211,46 +187,6 @@ def create_message_body(config):
     return fp.getvalue()
 
 
-def create_consumer(config):
-    return oauth.Consumer(
-        key=config.consumer_key(),
-        secret=config.consumer_secret()
-    )
-
-
-def create_client(config):
-    consumer = create_consumer(config)
-    auth_token = load_auth_token(config.token_store_file_path())
-    return oauth.Client(consumer, auth_token)
-
-
-def request_auth_token(config):
-    consumer = create_consumer(config)
-    client = oauth.Client(consumer)
-
-    resp, content = client.request(config.request_token_url(), "GET")
-    if resp['status'] != '200':
-            raise Exception("Invalid response %s." % resp['status'])
-    x = dict(urlparse.parse_qsl(content))
-
-    token = oauth.Token(x['oauth_token'], x['oauth_token_secret'])
-    token.set_verifier(prompt_verifier(token, config.auth_url()))
-    client = oauth.Client(consumer, token)
-
-    resp, content = client.request(config.access_token_url(), "POST")
-    x = dict(urlparse.parse_qsl(content))
-
-    return oauth.Token(
-        key=x['oauth_token'],
-        secret=x['oauth_token_secret']
-    )
-
-
-def fetch_token_to_file(config):
-    auth_token = request_auth_token(config)
-    save_auth_token(config.token_store_file_path(), auth_token)
-
-
 def append_history(config):
     with io.open(config.history_file_path(), 'ab') as fp:
         writer = csv.writer(fp)
@@ -294,7 +230,6 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--begin-date', action='store', default=None)
     parser.add_argument('--last-date', action='store', default=None)
-    parser.add_argument('--fetch-token', action='store_true')
 
     args = parser.parse_args()
 
@@ -315,23 +250,12 @@ def main():
         logging.info("begin_date {} is later than end_date {}, do nothing")
         sys.exit(1)
     elif not args.dry_run:
-        if args.fetch_token:
-            fetch_token_to_file(config)
-            sys.exit()
+        yammer = yampy.Yammer(access_token=config.access_token())
 
-        client = create_client(config)
-
-        params = urllib.urlencode(dict(
+        yammer.messages.create(
+            create_message_body(config).encode(u'utf-8'),
             group_id=config.group_id(),
-            body=create_message_body(config).encode(u'utf-8'),
-            broadcast=True
-        ))
-
-        resp, content = client.request(config.messages_url(), 'POST', params)
-        logging.info("response-status={}".format(resp['status']))
-        if not resp['status'].startswith('2'):
-            logging.warning("response-content={}".format(resp['status']))
-            sys.exit(1)
+        )
 
     append_history(config)
 
